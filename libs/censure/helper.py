@@ -3,7 +3,7 @@ from __future__ import unicode_literals, print_function
 import os
 import codecs
 
-from censure.base import Censor
+from libs.censure.base import Censor
 
 
 class CensorHelper:

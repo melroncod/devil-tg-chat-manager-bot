@@ -118,7 +118,7 @@ class CensorBase:
     lang = 'ru'
 
     def __init__(self, do_compile=True):
-        self.lang_lib = import_module('censure.lang.{}'.format(self.lang))
+        self.lang_lib = import_module('libs.censure.lang.{}'.format(self.lang))
 
         if do_compile:
             # patterns will be pre-compiled, so we need to copy them

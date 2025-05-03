@@ -147,6 +147,13 @@ def create_tables():
     )
     """)
 
+    # 9) Welcome settings
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS welcome_settings (
+        chat_id      INTEGER PRIMARY KEY,
+        delete_timeout INTEGER NOT NULL
+    )""")
+
     conn.commit()
     conn.close()
 
@@ -485,8 +492,8 @@ def add_warn(user_id: int, chat_id: int, username: str):
     c = conn.cursor()
     now = datetime.utcnow().isoformat()
     c.execute("""
-        INSERT INTO warnings (user_id, chat_id, username, last_warn)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO warnings (user_id, chat_id, username, warn_count, last_warn)
+        VALUES (?, ?, ?, 1, ?)
         ON CONFLICT(user_id, chat_id) DO UPDATE SET
             username   = excluded.username,
             warn_count = warnings.warn_count + 1,
@@ -494,6 +501,7 @@ def add_warn(user_id: int, chat_id: int, username: str):
     """, (user_id, chat_id, username, now))
     conn.commit()
     conn.close()
+
 
 def reset_warns(user_id: int, chat_id: int):
     conn = sqlite3.connect(DB_NAME)
@@ -599,8 +607,35 @@ def set_rules(chat_id: int, rules: str):
         VALUES (?, ?)
         ON CONFLICT(chat_id) DO UPDATE SET rules=excluded.rules
     """, (chat_id, rules))
+
+def set_welcome_delete_timeout(chat_id: int, timeout: int):
+    """
+    timeout: количество секунд (0 — отключить авто‑удаление)
+    """
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO welcome_settings (chat_id, delete_timeout)
+        VALUES (?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET delete_timeout = excluded.delete_timeout
+    """, (chat_id, timeout))
     conn.commit()
     conn.close()
+
+
+def get_welcome_delete_timeout(chat_id: int) -> int | None:
+    """
+    Возвращает:
+      - число секунд,
+      - 0 — если явно отключено,
+      - None — если ещё не задано (будем понимать как «по умолчанию»).
+    """
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT delete_timeout FROM welcome_settings WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 
 def get_rules(chat_id: int) -> str | None:

@@ -29,6 +29,9 @@ from services.logger import send_log
 
 router = Router()
 
+WELCOME_DELETE_DEFAULT = 60
+
+
 # --- FSM для Welcome, Rules и Logging ---
 class WelcomeStates(StatesGroup):
     waiting_for_welcome = State()
@@ -123,53 +126,73 @@ async def callback_manage_uc(cq: CallbackQuery):
     await cq.answer()
 
 
+# Утилита для получения читаемого имени чата
+async def _get_chat_name(bot: Bot, chat_id: int) -> str:
+    chat = await bot.get_chat(chat_id)
+    return getattr(chat, "title", None) or f"ID {chat_id}"
+
+
 # 3) Переключаем фильтры с логированием
 def _make_filter_handler(prefix: str, get_fn, set_fn, on_text: str, off_text: str):
     async def handler(cq: CallbackQuery):
         chat_id = int(cq.data.split(":", 1)[1])
-        cur = get_fn(chat_id)
-        new = not cur
-        set_fn(chat_id, new)
-        await cq.answer(f"{prefix} {'✅ ' + on_text if new else '❌ ' + off_text}", show_alert=True)
-        await send_log(
-            bot, chat_id,
-            f"⚙️ {prefix} {'включено' if new else 'отключено'} админом "
-            f"{cq.from_user.full_name} (@{cq.from_user.username or '—'})"
+
+        # Переключаем состояние фильтра
+        current = get_fn(chat_id)
+        new_state = not current
+        set_fn(chat_id, new_state)
+
+        # Ответ админу в виде pop‑up
+        await cq.answer(
+            f"{prefix} {'✅ ' + on_text if new_state else '❌ ' + off_text}",
+            show_alert=True
         )
+
+        # Получаем имя чата
+        chat_name = await _get_chat_name(bot, chat_id)
+
+        # Логируем действие
+        text = (
+            f"⚙️ {prefix} {'включено' if new_state else 'отключено'} админом "
+            f"{cq.from_user.full_name} (@{cq.from_user.username or '—'}) "
+            f"в чате «{chat_name}»"
+        )
+        await send_log(bot, chat_id, text)
     return handler
 
-router.callback_query(F.data.startswith("filter_links:"))( 
+router.callback_query(F.data.startswith("filter_links:"))(
     _make_filter_handler("Фильтрация ссылок",
                          get_link_filter, set_link_filter,
-                         "Включена", "Выключена") )
+                         "Включена", "Выключена"))
 router.callback_query(F.data.startswith("filter_caps:"))(
     _make_filter_handler("Антикапс",
                          get_caps_filter, set_caps_filter,
-                         "Включён", "Выключён") )
+                         "Включён", "Выключён"))
 router.callback_query(F.data.startswith("filter_spam:"))(
     _make_filter_handler("Антиспам",
                          get_spam_filter, set_spam_filter,
-                         "Включён", "Выключён") )
+                         "Включён", "Выключён"))
 router.callback_query(F.data.startswith("filter_stickers:"))(
     _make_filter_handler("Антиспам стикеров",
                          get_sticker_filter, set_sticker_filter,
-                         "Включён", "Выключён") )
+                         "Включён", "Выключён"))
 router.callback_query(F.data.startswith("filter_swear:"))(
     _make_filter_handler("Фильтрация мата",
                          get_swear_filter, set_swear_filter,
-                         "Включена", "Выключена") )
+                         "Включена", "Выключена"))
 router.callback_query(F.data.startswith("filter_keywords:"))(
     _make_filter_handler("Ключевые слова",
                          get_keywords_filter, set_keywords_filter,
-                         "Включены", "Выключены") )
+                         "Включены", "Выключены"))
 
 
 # 4) Установка приветствия
 @router.callback_query(F.data.startswith("setup_welcome:"))
 async def callback_setup_welcome(cq: CallbackQuery, state: FSMContext):
-    chat_id = int(cq.data.split(":",1)[1])
+    chat_id = int(cq.data.split(":", 1)[1])
     if not await is_admin_in_chat(chat_id, cq.from_user.id):
         return await cq.answer("❌ Только админ может.", show_alert=True)
+
     await state.update_data(chat_id=chat_id)
     await cq.message.answer(
         "🔧 Введите текст приветствия.\n"
@@ -178,16 +201,21 @@ async def callback_setup_welcome(cq: CallbackQuery, state: FSMContext):
     await state.set_state(WelcomeStates.waiting_for_welcome)
     await cq.answer()
 
+
 @router.message(WelcomeStates.waiting_for_welcome)
 async def process_welcome_text(message: Message, state: FSMContext):
-    data   = await state.get_data(); chat_id = data['chat_id']
-    text   = message.text.strip()
+    data = await state.get_data()
+    chat_id = data['chat_id']
+    text = message.text.strip()
     set_welcome_message(chat_id, text)
+
     await message.answer(f"✅ Приветствие установлено:\n\n{text}")
+
+    chat_name = await _get_chat_name(bot, chat_id)
     await send_log(
         bot, chat_id,
         f"✏️ Приветствие изменено админом {message.from_user.full_name} "
-        f"(@{message.from_user.username or '—'}):\n{text}"
+        f"(@{message.from_user.username or '—'}) в чате «{chat_name}»:\n{text}"
     )
     await state.clear()
 
@@ -197,8 +225,10 @@ async def process_welcome_text(message: Message, state: FSMContext):
 async def on_user_join(event: ChatMemberUpdated):
     if event.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
+
     welcome = get_welcome_message(event.chat.id)
-    user    = event.new_chat_member.user
+    user = event.new_chat_member.user
+
     if welcome:
         await event.answer(
             welcome.format(
@@ -208,34 +238,43 @@ async def on_user_join(event: ChatMemberUpdated):
             ),
             parse_mode="HTML"
         )
+
+    chat_name = event.chat.title or f"ID {event.chat.id}"
     await send_log(
         bot, event.chat.id,
-        f"👤 Новый участник: {user.full_name} @{user.username or '—'} (#u{user.id})"
+        f"👤 Новый участник: {user.full_name} @{user.username or '—'} "
+        f"(#u{user.id}) в чате «{chat_name}»"
     )
 
 
 # 6) Установка правил
 @router.callback_query(F.data.startswith("setup_rules:"))
 async def callback_setup_rules(cq: CallbackQuery, state: FSMContext):
-    chat_id = int(cq.data.split(":",1)[1])
+    chat_id = int(cq.data.split(":", 1)[1])
     if not await is_admin_in_chat(chat_id, cq.from_user.id):
         return await cq.answer("❌ Только админ может.", show_alert=True)
-    await state.update_data(chat_id=chat_id)
+
     current = get_rules(chat_id) or "(не заданы)"
+    await state.update_data(chat_id=chat_id)
     await cq.message.answer(f"🔧 Текущие правила:\n{current}\n\nВведите новые правила (HTML).")
     await state.set_state(RulesStates.waiting_for_rules)
     await cq.answer()
 
+
 @router.message(RulesStates.waiting_for_rules)
 async def process_rules_text(message: Message, state: FSMContext):
-    data   = await state.get_data(); chat_id = data['chat_id']
-    text   = message.text.strip()
+    data = await state.get_data()
+    chat_id = data['chat_id']
+    text = message.text.strip()
     set_rules(chat_id, text)
+
     await message.answer(f"✅ Правила установлены:\n\n{text}")
+
+    chat_name = await _get_chat_name(bot, chat_id)
     await send_log(
         bot, chat_id,
         f"✏️ Правила изменены админом {message.from_user.full_name} "
-        f"(@{message.from_user.username or '—'}):\n{text}"
+        f"(@{message.from_user.username or '—'}) в чате «{chat_name}»:\n{text}"
     )
     await state.clear()
 

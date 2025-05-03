@@ -13,7 +13,8 @@ from db import (
     add_ban, reset_bans,
     reset_warns,
     add_user_chat, add_chat,
-    set_rules, get_rules
+    set_rules, get_rules,
+    set_welcome_delete_timeout, get_welcome_delete_timeout
 )
 
 # Настройка логирования
@@ -21,6 +22,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+WELCOME_DELETE_DEFAULT = 60
 
 async def is_chat_admin(message: types.Message) -> bool:
     """
@@ -266,6 +269,46 @@ async def cmd_show_rules(message: Message):
         await message.reply("❗ Правила для этого чата ещё не заданы.")
     else:
         await message.reply(f"📜 <b>Правила чата:</b>\n{rules}", parse_mode="HTML")
+
+# /setwelcomedelete <секунд> — задаёт таймаут авто‑удаления
+@router.message(
+    Command(commands=["setwelcomedelete"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_set_welcome_delete(message: Message):
+    if not await is_chat_admin(message):
+        return await message.reply("❌ Только администраторы могут.")
+    parts = message.text.split()
+    if len(parts) < 2:
+        return await message.reply("❗ Укажите время в секундах (0 — отключить).")
+    try:
+        t = int(parts[1])
+        if t < 0:
+            raise ValueError
+    except ValueError:
+        return await message.reply("❗ Неверный формат. Нужно целое число ≥ 0.")
+    set_welcome_delete_timeout(message.chat.id, t)
+    if t == 0:
+        await message.reply("✅ Авто‑удаление приветствия **отключено**.")
+    else:
+        await message.reply(f"✅ Авто‑удаление приветствия установлено: {t} секунд.")
+
+# /getwelcomedelete — показывает текущую настройку
+@router.message(
+    Command(commands=["getwelcomedelete"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_get_welcome_delete(message: Message):
+    if not await is_chat_admin(message):
+        return await message.reply("❌ Только администраторы могут.")
+    t = get_welcome_delete_timeout(message.chat.id)
+    if t is None:
+        t = WELCOME_DELETE_DEFAULT
+        await message.reply(f"Таймаут не задан, используется дефолт: {t} секунд.")
+    elif t == 0:
+        await message.reply("Авто‑удаление приветствия **отключено**.")
+    else:
+        await message.reply(f"Авто‑удаление приветствия: {t} секунд.")
 
 
 def register_handlers_aliases(dp):
