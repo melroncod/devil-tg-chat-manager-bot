@@ -272,7 +272,7 @@ async def cmd_show_rules(message: Message):
 
 # /setwelcomedelete <секунд> — задаёт таймаут авто‑удаления
 @router.message(
-    Command(commands=["setwelcomedelete"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    Command(commands=["setwelcomedelete"], prefix=("/", "!"), ignore_mention=True, ignore_case=True),
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_set_welcome_delete(message: Message):
@@ -289,7 +289,7 @@ async def cmd_set_welcome_delete(message: Message):
         return await message.reply("❗ Неверный формат. Нужно целое число ≥ 0.")
     set_welcome_delete_timeout(message.chat.id, t)
     if t == 0:
-        await message.reply("✅ Авто‑удаление приветствия **отключено**.")
+        await message.reply("✅ Авто‑удаление приветствия отключено.")
     else:
         await message.reply(f"✅ Авто‑удаление приветствия установлено: {t} секунд.")
 
