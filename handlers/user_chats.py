@@ -9,6 +9,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import ChatMemberUpdatedFilter, JOIN_TRANSITION
+from .start import inline_kb, reply_kb
 
 from loader import bot
 from db import (
@@ -55,15 +56,33 @@ async def cmd_my_chats(message: Message):
     user_id = message.from_user.id
     uc = get_user_chats(user_id)
     if not uc:
-        return await message.answer("У вас ещё нет чатов. Добавьте через команду «установка».", parse_mode="Markdown")
+        return await message.answer(
+            "У вас ещё нет чатов. Добавьте через команду «Установка».",
+            parse_mode="Markdown"
+        )
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=name, callback_data=f"manage_uc:{chat_id}")]
-            for chat_id, name in uc.items()
-        ]
-    )
+    # 1) Генерим кнопки для каждого чата
+    buttons = [
+        [InlineKeyboardButton(text=name, callback_data=f"manage_uc:{chat_id}")]
+        for chat_id, name in uc.items()
+    ]
+    # 2) И в конце — кнопку «Назад»
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer("Ваши чаты:", reply_markup=kb)
+
+
+@router.callback_query(F.data == "back_to_main")
+async def callback_back_to_main(cq: CallbackQuery):
+    # 1) Отправляем reply‑клавиатуру с тем же текстом "Выберите действие:"
+    await bot.send_message(
+        cq.from_user.id,
+        "Выберите действие:",
+        reply_markup=reply_kb
+    )
+    await cq.answer()
+
 
 
 @router.callback_query(F.data.startswith("manage_uc:"))
@@ -322,6 +341,17 @@ async def callback_delete_chat(cq: CallbackQuery):
     await cq.message.edit_text("Чат удалён из вашего списка.")
     await cq.answer("Готово!")
     await send_log(bot, chat_id, f"🗑️ Чат удалён из списка пользователем {cq.from_user.full_name}")
+
+
+@router.callback_query(F.data == "back_to_main")
+async def callback_back_to_main(cq: CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Мои чаты", callback_data="back_to_chats")],
+        # добавь сюда другие кнопки, если они есть в главном меню
+    ])
+    await cq.message.edit_text("👋 Добро пожаловать! Выберите команду:", reply_markup=kb)
+    await cq.answer()
+
 
 
 @router.callback_query(F.data == "back_to_chats")

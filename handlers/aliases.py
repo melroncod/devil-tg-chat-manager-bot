@@ -14,7 +14,8 @@ from db import (
     reset_warns,
     add_user_chat, add_chat,
     set_rules, get_rules,
-    set_welcome_delete_timeout, get_welcome_delete_timeout
+    set_welcome_delete_timeout, get_welcome_delete_timeout,
+    get_keywords, add_keyword, remove_keyword
 )
 
 # Настройка логирования
@@ -259,7 +260,7 @@ async def cmd_setup(message: Message):
 
 # 7) Вывод правил командой /rules или !rules
 @router.message(
-    Command(commands=["rules"], prefix=("/", "!"), ignore_mention=True, ignore_case=True),
+    Command(commands=["rules"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_show_rules(message: Message):
@@ -272,7 +273,7 @@ async def cmd_show_rules(message: Message):
 
 # /setwelcomedelete <секунд> — задаёт таймаут авто‑удаления
 @router.message(
-    Command(commands=["setwelcomedelete"], prefix=("/", "!"), ignore_mention=True, ignore_case=True),
+    Command(commands=["setwelcomedelete"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_set_welcome_delete(message: Message):
@@ -309,6 +310,74 @@ async def cmd_get_welcome_delete(message: Message):
         await message.reply("Авто‑удаление приветствия **отключено**.")
     else:
         await message.reply(f"Авто‑удаление приветствия: {t} секунд.")
+
+
+@router.message(
+    Command(commands=["setkw"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_add_keyword(message: Message):
+    if not await is_chat_admin(message):
+        return await message.reply("❌ Только администратор может добавлять ключевые слова.")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        return await message.reply("❗ Укажите ключевое слово после команды.\nПример: `/setkw спойлер`", parse_mode="Markdown")
+    kw = parts[1].strip().lower()
+    add_keyword(message.chat.id, kw)
+    await message.reply(f"✅ Ключевое слово «{kw}» добавлено в фильтр.")
+
+# Удалить ключевое слово из фильтра: /nor спойлер
+@router.message(
+    Command(commands=["remfromkw"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_remove_keyword(message: Message):
+    if not await is_chat_admin(message):
+        return await message.reply("❌ Только администратор может удалять ключевые слова.")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        return await message.reply("❗ Укажите ключевое слово для удаления.\nПример: `/remfromkw спойлер`", parse_mode="Markdown")
+    kw = parts[1].strip().lower()
+    remove_keyword(message.chat.id, kw)
+    await message.reply(f"✅ Ключевое слово «{kw}» удалено из фильтра.")
+
+# Показать текущие ключевые слова: /listkw
+@router.message(
+    Command(commands=["listkw"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_list_keywords(message: Message):
+    kws = get_keywords(message.chat.id)
+    if not kws:
+        return await message.reply("⚠️ Пока нет ни одного ключевого слова.")
+    await message.reply("🔑 Текущие ключевые слова в фильтре:\n" +
+                        "\n".join(f"- {w}" for w in kws))
+
+
+@router.message(
+    Command(commands=["help", "commands"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_show_commands(message: Message):
+    help_text = (
+        "/rules — показать правила чата\n"
+        "/setup — регистрация чата для управления\n"
+        "/ban [@username|reply] — забанить пользователя\n"
+        "/unban [@username|reply] — разбанить пользователя\n"
+        "/mute [@username|reply] [часы] — замутить пользователя\n"
+        "/unmute [@username|reply] — размутить пользователя\n"
+        "/checkperms [@username|reply] — проверить права пользователя\n"
+        "/ro — переключить режим только для чтения\n"
+        "/resetwarn [@username|reply] — обнулить варны пользователя\n"
+        "/resetwarnsall — обнулить все варны в чате\n"
+        "/setwelcomedelete [секунд] — задать таймаут авто‑удаления приветствия\n"
+        "/getwelcomedelete — показать текущую настройку авто‑удаления\n"
+        "/setkw [слово] — добавить ключевое слово в фильтр\n"
+        "/remfromkw [слово] — удалить ключевое слово из фильтра\n"
+        "/listkw — показать все ключевые слова"
+    )
+    # Отправляем как Markdown, чтобы угловые скобки не ломали парсер HTML
+    await message.reply(help_text, parse_mode="Markdown")
 
 
 def register_handlers_aliases(dp):
