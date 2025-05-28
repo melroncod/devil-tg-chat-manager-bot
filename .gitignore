@@ -9,6 +9,7 @@ Dockerfile
 
 # Project local ignore
 bot_manager.db
+dump.sql
 
 # Sensitive or high-churn files:
 .idea/dataSources.ids
