@@ -246,7 +246,7 @@ async def cmd_ro(message: types.Message):
         can_send_other_messages=ro_enabled,
         can_add_web_page_previews=ro_enabled
     )
-    status = "включен" if ro_enabled else "выключен"
+    status = "выключен" if ro_enabled else "включен"
     await bot.set_chat_permissions(chat_id=chat_id, permissions=perms)
     await message.reply(f"✅ Read-Only режим {status}")
     await send_log(

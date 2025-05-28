@@ -125,6 +125,11 @@ async def on_bot_added(event: ChatMemberUpdated):
 
 @router.callback_query(F.data == "back_to_main")
 async def callback_back_to_main(cq: CallbackQuery):
+    try:
+        await cq.message.delete()
+    except:
+        pass
+
     await bot.send_message(
         cq.from_user.id,
         "Выберите действие:",
@@ -530,21 +535,35 @@ async def callback_delete_chat(cq: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_chats")
 async def callback_back_to_chats(cq: CallbackQuery):
+    # Удаляем текущее сообщение с клавиатурой
+    try:
+        await cq.message.delete()
+    except:
+        pass
+
     user_id = cq.from_user.id
     uc = get_user_chats(user_id)
     if not uc:
-        await cq.message.edit_text(
+        # Если чатов нет — просто показываем сообщение
+        await bot.send_message(
+            user_id,
             "У вас ещё нет чатов. Добавьте через команду «Установка».",
             parse_mode="Markdown"
         )
     else:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=name, callback_data=f"manage_uc:{chat_id}")]
-                for chat_id, name in uc.items()
-            ]
+        # Формируем список кнопок чатов + кнопку «🔙 Назад»
+        buttons = [
+                      [InlineKeyboardButton(text=name, callback_data=f"manage_uc:{chat_id}")]
+                      for chat_id, name in uc.items()
+                  ] + [[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]]
+
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await bot.send_message(
+            user_id,
+            "Ваши чаты:",
+            reply_markup=kb
         )
-        await cq.message.edit_text("Ваши чаты:", reply_markup=kb)
+
     await cq.answer()
 
 
