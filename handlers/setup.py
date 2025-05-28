@@ -1,4 +1,3 @@
-# handlers/setup.py
 import logging
 from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -6,9 +5,10 @@ from aiogram.enums import ChatType
 
 router = Router()
 
+
 @router.message(lambda msg: msg.chat.type == ChatType.PRIVATE
-                         and msg.text
-                         and msg.text.lower() == "установка")
+                            and msg.text
+                            and msg.text.lower() == "установка")
 async def cmd_installation(message: Message):
     logging.info("✔️ Попали в cmd_installation")
     text = (
@@ -29,6 +29,7 @@ async def cmd_installation(message: Message):
         )
     ]])
     await message.answer(text, parse_mode="HTML", reply_markup=inline_kb, disable_web_page_preview=True)
+
 
 def register_handlers_setup(dp):
     dp.include_router(router)

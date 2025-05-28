@@ -9,8 +9,7 @@
 
 ## About Devil
 
-Devil is a personal bot made for easy chat auto-moderation. It adds reporting functionality, profanity filtering (both English & Russian), logging to a private channel, spam detection, warning/mute escalation and much more!  
-The code is provided “as is” – feel free to extend, refactor or optimize it as you like.
+Devil is a personal bot made for easy chat auto-moderation. It adds reporting functionality, profanity filtering (both English & Russian), logging to a private channel, spam detection, warning/mute escalation and much more!
 
 ---
 
@@ -51,7 +50,7 @@ Interactive inline buttons in the “My Chats” menu let you toggle filters, se
 
 ## Database
 
-Uses SQLite (`bot_manager.db`). All tables and migrations run automatically on startup.
+Uses PostgreSQL.
 
 ---
 
@@ -71,7 +70,7 @@ Code is provided “as is” and can be freely extended or improved.
 
 ## License
 
-Distributed under the GNU License.  
+Licensed under the Apache License, Version 2.0.  
 © 2025 melroncod
 
 ---
@@ -86,8 +85,7 @@ Distributed under the GNU License.
 ## О Devil
 
 Devil — личный бот для простой и удобной автоматической модерации чатов.  
-Поддерживает отчёты, фильтрацию нецензурной лексики (англ. и рус.), логирование в приватный канал, детектирование спама, эскалацию предупреждений/мутов и многое другое!  
-Код предоставлен «как есть» — вы можете расширять, рефакторить или оптимизировать его по своему усмотрению.
+Поддерживает отчёты, фильтрацию нецензурной лексики (англ. и рус.), логирование в приватный канал, детектирование спама, эскалацию предупреждений/мутов и многое другое!
 
 ---
 
@@ -128,7 +126,7 @@ Devil — личный бот для простой и удобной автом
 
 ## База данных
 
-Используется SQLite (`bot_manager.db`). Все таблицы и миграции создаются автоматически при старте.
+Используется PostgreSQL.
 
 ---
 
@@ -141,5 +139,5 @@ Devil — личный бот для простой и удобной автом
 
 ## Лицензия
 
-GNU License.  
+Licensed under the Apache License, Version 2.0.  
 © 2025 melroncod

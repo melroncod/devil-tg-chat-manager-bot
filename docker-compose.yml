@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: telegram_chat_manager_bot
+    restart: always
+    env_file:
+      - .env
+    networks:
+      - tea_bot_default
+
+networks:
+  tea_bot_default:
+    external: true
