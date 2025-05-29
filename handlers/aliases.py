@@ -8,7 +8,6 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest
 
 from loader import bot
-
 from services.logger import send_log
 from db import (
     upsert_alias,
@@ -31,8 +30,8 @@ from db import (
     get_log_settings,
     get_devil_mode,
     set_devil_mode,
+    get_admins,
 )
-
 from handlers.user_chats import callback_manage_uc
 
 logger = logging.getLogger(__name__)
@@ -46,8 +45,7 @@ async def is_chat_admin(message: types.Message) -> bool:
     try:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
-    except Exception as e:
-        logger.error(f"Ошибка при проверке прав админа: {e}")
+    except:
         return False
 
 
@@ -66,82 +64,68 @@ async def get_target_user(message: types.Message, username: str | None = None) -
         if target and target.username:
             upsert_alias(chat_id, target.username, target.id)
         return target
-
-    if not message.from_user and username:
-        target_id = resolve_username(chat_id, username.lstrip('@').lower())
+    if username:
+        mention = username.lstrip('@').lower()
+        target_id = resolve_username(chat_id, mention)
         if target_id:
             try:
-                return (await bot.get_chat_member(chat_id, target_id)).user
+                member = await bot.get_chat_member(chat_id, target_id)
+                return member.user
             except:
                 return None
-        return None
-
-    if username:
-        target_id = resolve_username(chat_id, username.lstrip('@').lower())
-        if target_id:
-            try:
-                return (await bot.get_chat_member(chat_id, target_id)).user
-            except:
-                pass
         try:
-            member = await bot.get_chat_member(chat_id, username)
+            member = await bot.get_chat_member(chat_id, mention)
             user = member.user
             if user.username:
                 upsert_alias(chat_id, user.username, user.id)
             return user
         except:
             return None
-
     return None
 
 
 async def process_admin_command(message: types.Message, command_type: str) -> None:
-    sender = message.from_user.id if message.from_user else "anon_admin"
-    logger.info(f"Process command {command_type} by {sender}: {message.text}")
-
-    if not await is_chat_admin(message):
-        await message.reply("❌ Только администраторы чата могут использовать эту команду")
-        return
-
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins():
+        if not await is_chat_admin(message):
+            await message.reply("❌ Только администраторы чата (или супер-админ бота) могут использовать эту команду.")
+            return
     parts = message.text.split()
     username_arg = parts[1] if len(parts) > 1 else None
     target = await get_target_user(message, username_arg)
     if not target:
-        await message.reply("❗ Ответьте на сообщение или укажите @username (или ID)")
+        await message.reply("❗ Ответьте на сообщение или укажите @username (или ID).")
         return
-
     chat_id = message.chat.id
     chat_name = await _get_chat_name(chat_id)
-
+    target_id = target.id
+    if target_id in get_admins():
+        await message.reply("❗ Нельзя воздействовать на главного админа бота.")
+        return
     try:
-        member = await bot.get_chat_member(chat_id, target.id)
+        member = await bot.get_chat_member(chat_id, target_id)
         if member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-            await message.reply("❗ Нельзя воздействовать на администратора")
+            await message.reply("❗ Нельзя воздействовать на администратора группы.")
             return
-
-        # BAN
+    except:
+        pass
+    try:
         if command_type == "ban":
-            await bot.ban_chat_member(chat_id, target.id)
-            add_ban(target.id, chat_id, target.username or target.full_name)
+            await bot.ban_chat_member(chat_id, target_id)
+            add_ban(target_id, chat_id, target.username or target.full_name)
             await message.reply(f"✅ @{target.username or target.first_name} забанен")
             await send_log(
                 bot, chat_id,
-                f"🔨 ban: @{target.username or target.first_name} (#{target.id}) "
-                f"забанен админом {message.from_user.full_name} в «{chat_name}»"
+                f"🔨 ban: @{target.username or target.first_name} (#{target_id}) забанен админом {message.from_user.full_name} в «{chat_name}»"
             )
-
-        # UNBAN
         elif command_type == "unban":
-            await bot.unban_chat_member(chat_id, target.id)
-            reset_bans(target.id, chat_id)
+            await bot.unban_chat_member(chat_id, target_id)
+            reset_bans(target_id, chat_id)
             await message.reply(f"✅ @{target.username or target.first_name} разбанен")
             await send_log(
                 bot, chat_id,
-                f"🔓 unban: @{target.username or target.first_name} (#{target.id}) "
-                f"разбанен админом {message.from_user.full_name} в «{chat_name}»"
+                f"🔓 unban: @{target.username or target.first_name} (#{target_id}) разбанен админом {message.from_user.full_name} в «{chat_name}»"
             )
-
-        # MUTE
         elif command_type == "mute":
             restriction = 300
             if len(parts) > 2:
@@ -150,27 +134,23 @@ async def process_admin_command(message: types.Message, command_type: str) -> No
                 except ValueError:
                     await message.reply("❗ Неверный формат времени. Укажите число часов.")
                     return
-
             await bot.restrict_chat_member(
                 chat_id=chat_id,
-                user_id=target.id,
+                user_id=target_id,
                 permissions=types.ChatPermissions(can_send_messages=False),
                 until_date=int(time()) + restriction
             )
-            add_mute(target.id, chat_id, target.username or target.full_name)
+            add_mute(target_id, chat_id, target.username or target.full_name)
             period = f"{parts[2]} ч" if len(parts) > 2 else "навсегда"
             await message.reply(f"✅ @{target.username or target.first_name} замучен {period}")
             await send_log(
                 bot, chat_id,
-                f"🔇 mute: @{target.username or target.first_name} (#{target.id}) "
-                f"замучен {period} админом {message.from_user.full_name} в «{chat_name}»"
+                f"🔇 mute: @{target.username or target.first_name} (#{target_id}) замучен {period} админом {message.from_user.full_name} в «{chat_name}»"
             )
-
-        # UNMUTE
         elif command_type == "unmute":
             await bot.restrict_chat_member(
                 chat_id=chat_id,
-                user_id=target.id,
+                user_id=target_id,
                 permissions=types.ChatPermissions(
                     can_send_messages=True,
                     can_send_media_messages=True,
@@ -178,14 +158,12 @@ async def process_admin_command(message: types.Message, command_type: str) -> No
                     can_add_web_page_previews=True
                 )
             )
-            reset_mutes(target.id, chat_id)
+            reset_mutes(target_id, chat_id)
             await message.reply(f"✅ @{target.username or target.first_name} размучен")
             await send_log(
                 bot, chat_id,
-                f"🔊 unmute: @{target.username or target.first_name} (#{target.id}) "
-                f"размучен админом {message.from_user.full_name} в «{chat_name}»"
+                f"🔊 unmute: @{target.username or target.first_name} (#{target_id}) размучен админом {message.from_user.full_name} в «{chat_name}»"
             )
-
     except Exception as e:
         logger.error(f"Ошибка в process_admin_command: {e}")
         await message.reply(f"❗ Произошла ошибка: {e}")
@@ -231,13 +209,11 @@ async def cmd_unmute(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_ro(message: types.Message):
-    if not await is_chat_admin(message):
-        await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
         return
-
     chat_id = message.chat.id
     chat_name = await _get_chat_name(chat_id)
-
     chat = await bot.get_chat(chat_id)
     current = chat.permissions or types.ChatPermissions(
         can_send_messages=True,
@@ -266,11 +242,12 @@ async def cmd_ro(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_resetwarn(message: types.Message):
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     target = await get_target_user(message)
     if not target:
-        return await message.reply("❗ Ответьте или укажите @username")
+        return
     reset_warns(target.id, message.chat.id)
     chat_id = message.chat.id
     chat_name = await _get_chat_name(chat_id)
@@ -287,8 +264,9 @@ async def cmd_resetwarn(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_resetwarnsall(message: types.Message):
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     try:
         reset_all_warns(message.chat.id)
         chat_id = message.chat.id
@@ -298,9 +276,8 @@ async def cmd_resetwarnsall(message: types.Message):
             bot, message.chat.id,
             f"♻️ resetwarnsall: все варны сброшены админом {message.from_user.full_name} в «{chat_name}»"
         )
-    except Exception as e:
-        logger.error(f"Ошибка при сбросе всех варнов: {e}")
-        await message.reply(f"❗ Не удалось сбросить варны: {e}")
+    except:
+        return
 
 
 @router.message(
@@ -308,15 +285,14 @@ async def cmd_resetwarnsall(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_setup(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id if message.from_user else None
-    if user_id is None:
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
         return
+    chat_id = message.chat.id
     chat_title = message.chat.title or f"chat_{chat_id}"
     add_chat(chat_id, chat_title)
-    chat_id = message.chat.id
     chat_name = await _get_chat_name(chat_id)
-    add_user_chat(user_id, chat_id, chat_title)
+    add_user_chat(sender_id, chat_id, chat_title)
     await message.reply(f"✅ Чат «{chat_title}» зарегистрирован")
     await send_log(
         bot, chat_id,
@@ -342,16 +318,18 @@ async def cmd_show_rules(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_set_welcome_delete(message: types.Message):
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     parts = message.text.split()
     if len(parts) < 2:
-        return await message.reply("❗ Укажите время в секундах.")
+        return
     try:
-        t = int(parts[1]);
-        if t < 0: raise ValueError
+        t = int(parts[1])
+        if t < 0:
+            return
     except:
-        return await message.reply("❗ Нужно целое ≥ 0.")
+        return
     set_welcome_delete_timeout(message.chat.id, t)
     chat_id = message.chat.id
     chat_name = await _get_chat_name(chat_id)
@@ -368,8 +346,9 @@ async def cmd_set_welcome_delete(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_get_welcome_delete(message: types.Message):
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     t = get_welcome_delete_timeout(message.chat.id)
     if t is None:
         t = WELCOME_DELETE_DEFAULT
@@ -385,11 +364,12 @@ async def cmd_get_welcome_delete(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_add_keyword(message: types.Message):
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
-        return await message.reply("❗ Укажите слово.", parse_mode="Markdown")
+        return
     kw = parts[1].strip().lower()
     add_keyword(message.chat.id, kw)
     chat_id = message.chat.id
@@ -406,11 +386,12 @@ async def cmd_add_keyword(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_remove_keyword(message: types.Message):
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут.")
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
-        return await message.reply("❗ Укажите слово.", parse_mode="Markdown")
+        return
     kw = parts[1].strip().lower()
     remove_keyword(message.chat.id, kw)
     chat_id = message.chat.id
@@ -427,21 +408,17 @@ async def cmd_remove_keyword(message: types.Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_demon_text(message: Message):
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     chat_id = message.chat.id
-
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут включать Devil mode.")
-
     set_devil_mode(chat_id, True)
-
-    await message.reply("👿 Devil mode включён! С этого момента разрешены только сообщения с матами.")
-
+    await message.reply("👿 <b>Devil mode</b> включён! С этого момента разрешены <b>только</b> сообщения с матами.")
     chat_name = await _get_chat_name(chat_id)
     await send_log(
         bot, chat_id,
         f"👿 demon: Devil mode включён админом {message.from_user.full_name} в «{chat_name}»"
     )
-
     fake = CallbackQuery(
         id=str(message.message_id),
         from_user=message.from_user,
@@ -449,7 +426,6 @@ async def cmd_demon_text(message: Message):
         message=message,
         data=f"manage_uc:{chat_id}"
     )
-
     try:
         await callback_manage_uc(fake)
     except TelegramBadRequest:
@@ -461,21 +437,17 @@ async def cmd_demon_text(message: Message):
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
 async def cmd_demoff_text(message: Message):
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
     chat_id = message.chat.id
-
-    if not await is_chat_admin(message):
-        return await message.reply("❌ Только админы могут выключать Devil mode.")
-
     set_devil_mode(chat_id, False)
-
-    await message.reply("😈 Devil mode отключён. Возвращаемся к обычным правилам.")
-
+    await message.reply("😈 <b>Devil mode</b> отключён. Возвращаемся к <b>обычным</b> правилам.")
     chat_name = await _get_chat_name(chat_id)
     await send_log(
         bot, chat_id,
         f"😈 demoff: Devil mode отключён админом {message.from_user.full_name} в «{chat_name}»"
     )
-
     fake = CallbackQuery(
         id=str(message.message_id),
         from_user=message.from_user,
@@ -483,7 +455,6 @@ async def cmd_demoff_text(message: Message):
         message=message,
         data=f"manage_uc:{chat_id}"
     )
-
     try:
         await callback_manage_uc(fake)
     except TelegramBadRequest:
@@ -494,10 +465,10 @@ async def cmd_demoff_text(message: Message):
     Command(commands=["listkw"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
-async def cmd_list_keywords(message: types.Message):
+async def cmd_list_keywords(message: Message):
     kws = get_keywords(message.chat.id)
     if not kws:
-        return await message.reply("⚠️ Нет ключевых слов.")
+        return
     await message.reply("🔑 Keywords:\n" + "\n".join(f"- {w}" for w in kws))
 
 
@@ -505,7 +476,7 @@ async def cmd_list_keywords(message: types.Message):
     Command(commands=["help", "commands"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
 )
-async def cmd_show_commands(message: types.Message):
+async def cmd_show_commands(message: Message):
     help_text = (
         "/rules — показать правила чата\n"
         "/setup — регистрация чата для управления\n"
@@ -526,6 +497,31 @@ async def cmd_show_commands(message: types.Message):
         "/demoff — выключить Devil mode"
     )
     await message.reply(help_text, parse_mode="Markdown")
+
+
+@router.message(
+    Command(commands=["msg"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_msg(message: types.Message):
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins():
+        return
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.reply("❗ Использование: !msg <chat_id> <текст>")
+        return
+    try:
+        target_chat = int(parts[1])
+    except ValueError:
+        await message.reply("❗ Неверный chat_id")
+        return
+    text = parts[2]
+    try:
+        await bot.send_message(chat_id=target_chat, text=text)
+        await message.reply("✅ Сообщение отправлено")
+    except TelegramBadRequest as e:
+        await message.reply(f"❗ Ошибка при отправке: {e}")
 
 
 def register_handlers_aliases(dp):

@@ -14,16 +14,26 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, ChatPermissions
 from aiogram.enums import ChatType, ChatMemberStatus
+from aiogram.exceptions import TelegramBadRequest
 
 from loader import bot
 from db import (
-    get_link_filter, get_caps_filter, get_spam_filter, get_swear_filter,
-    get_keywords_filter, get_keywords,
-    get_warn_count, add_warn, reset_warns,
-    get_mute_info, add_mute, reset_mutes,
+    get_link_filter,
+    get_caps_filter,
+    get_spam_filter,
+    get_swear_filter,
+    get_keywords_filter,
+    get_keywords,
+    set_sticker_filter,
+    get_warn_count,
+    add_warn,
+    reset_warns,
+    get_mute_info,
+    add_mute,
+    reset_mutes,
     get_devil_mode,
+    get_admins
 )
-from config import ADMIN_IDS
 
 router = Router()
 
@@ -39,26 +49,13 @@ STICKER_LIMIT = 2
 # градация длительностей мьютов
 # 1) 1 мин, 2) 10 мин, 3) 1 ч, 4) 1 д, 5) 7 д, 6+) вечный
 MUTE_DURATIONS = [
-    60,  # 1 минута
-    10 * 60,  # 10 минут
-    60 * 60,  # 1 час
-    24 * 60 * 60,  # 1 день
-    7 * 24 * 60 * 60,  # 7 дней
-    None  # вечный
+    60,             # 1 минута
+    10 * 60,        # 10 минут
+    60 * 60,        # 1 час
+    24 * 60 * 60,   # 1 день
+    7 * 24 * 60 * 60,# 7 дней
+    None            # вечный
 ]
-
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-
-async def is_chat_admin(chat_id: int, user_id: int) -> bool:
-    try:
-        m = await bot.get_chat_member(chat_id, user_id)
-        return m.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-    except:
-        return False
-
 
 url_pattern = re.compile(r"https?://\S+|www\.\S+|t\.me/\S+")
 emoji_pattern = re.compile(
@@ -70,13 +67,13 @@ emoji_pattern = re.compile(
     flags=re.UNICODE
 )
 
+# Для Devil Mode: отслеживаем время последнего предупреждения для каждого пользователя
+last_devil_warning: dict[int, float] = defaultdict(float)
+# Карантин между предупреждениями (в секундах)
+DEVIL_WARNING_COOLDOWN = 5.0
+
 
 async def punish_for_spam(user_id: int, chat_id: int, message: Message):
-    """
-    Инкрементим count и last_mute через add_mute,
-    определяем duration по MUTE_DURATIONS и вызываем restrict с POSIX until_date.
-    """
-
     add_mute(user_id, chat_id, message.from_user.username or message.from_user.full_name)
     count, last_mute_dt = get_mute_info(user_id, chat_id)
 
@@ -100,15 +97,21 @@ async def punish_for_spam(user_id: int, chat_id: int, message: Message):
     )
 
     mention = f"<a href='tg://user?id={user_id}'>{message.from_user.full_name}</a>"
-    await message.answer(
-        f"⏳ {mention} замучен за флуд на {human}. (уровень {count})",
-        parse_mode="HTML"
-    )
+    try:
+        await message.answer(
+            f"⏳ {mention} замучен за флуд на {human}. (уровень {count})",
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest:
+        pass
 
 
 async def issue_warn_or_mute(user_id: int, chat_id: int, message: Message, reason: str):
-    # удаляем сообщение, даём варн или — если 3-й варн — мьют
-    await message.delete()
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
     username = message.from_user.username or message.from_user.full_name
     add_warn(user_id, chat_id, username)
     warns = get_warn_count(user_id, chat_id)
@@ -118,10 +121,13 @@ async def issue_warn_or_mute(user_id: int, chat_id: int, message: Message, reaso
         await punish_for_spam(user_id, chat_id, message)
         reset_warns(user_id, chat_id)
     else:
-        await message.answer(
-            f"⚠️ {mention} получил варн ({warns}/3) за {reason}.",
-            parse_mode="HTML"
-        )
+        try:
+            await message.answer(
+                f"⚠️ {mention} получил варн ({warns}/3) за {reason}.",
+                parse_mode="HTML"
+            )
+        except TelegramBadRequest:
+            pass
 
 
 @router.message(
@@ -141,78 +147,116 @@ async def moderation_filters(message: Message):
         return
 
     user_id = user.id
-    # админы освобождены
-    if await is_chat_admin(chat_id, user_id):
+    # кастомные админы из БД (создатель бота и пр.) освобождены
+    if user_id in get_admins():
         return
+
+    # штатные админы группы тоже освобождены
+    try:
+        m = await bot.get_chat_member(chat_id, user_id)
+        if m.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR):
+            return
+    except:
+        pass
 
     text = message.text or ""
 
+    # Devil Mode: разрешены только сообщения с матом
     if get_devil_mode(chat_id):
         ru = censor_ru.clean_line(text)
         en = censor_en.clean_line(text)
-        if not (ru[1] or ru[2] or en[1] or en[2]):
-            await message.delete()
+        has_mat = (ru[1] or ru[2] or en[1] or en[2])
+
+        if not has_mat:
+            now_ts = time.time()
+            last_ts = last_devil_warning.get(user_id, 0.0)
+
+            # Если прошло меньше кулдауна между предупреждениями, просто удаляем без отправки
+            if now_ts - last_ts < DEVIL_WARNING_COOLDOWN:
+                try:
+                    await message.delete()
+                except TelegramBadRequest:
+                    pass
+                return
+
+            # Иначе обновляем время последнего предупреждения
+            last_devil_warning[user_id] = now_ts
+            try:
+                await message.delete()
+            except TelegramBadRequest:
+                pass
+
             mention = f"<a href='tg://user?id={user.id}'>{user.full_name}</a>"
-            await message.answer(
-                f"🚫 {mention}, в Devil mode вы можете отправлять **только** сообщения с ненормативной лексикой.\n"
-                "Чтобы ваше сообщение не удалялось — добавьте в него мат.",
-                parse_mode="HTML"
-            )
+            try:
+                await message.answer(
+                    f"🚫 {mention}, в Devil mode вы можете отправлять <b>только</b> сообщения с ненормативной лексикой.\n"
+                    "Чтобы ваше сообщение не удалялось — добавьте в него мат.",
+                    parse_mode="HTML"
+                )
+            except TelegramBadRequest:
+                pass
+
         return
 
-    # проверяем, не в текущем ли мы муте
+    # Проверка мута
     count, last_mute_dt = get_mute_info(user_id, chat_id)
     if last_mute_dt:
-        # длительность текущего уровня
         lvl = count if count > 0 else 1
         duration = MUTE_DURATIONS[lvl - 1] if lvl <= len(MUTE_DURATIONS) else None
         if duration is None:
-            return  # вечный мут
-        # если текущее время < last_mute + duration — ещё сидит в муте
+            return
         if time.time() < last_mute_dt.timestamp() + duration:
             return
 
-    # антифлуд
-    now = time.time()
-    recent = [t for t in user_messages[user_id] if now - t < SPAM_INTERVAL]
-    recent.append(now)
-    user_messages[user_id] = recent
-    if len(recent) > SPAM_LIMIT:
-        return await punish_for_spam(user_id, chat_id, message)
+    # Антифлуд
+    if get_spam_filter(chat_id):
+        now = time.time()
+        recent = [t for t in user_messages[user_id] if now - t < SPAM_INTERVAL]
+        recent.append(now)
+        user_messages[user_id] = recent
+        if len(recent) > SPAM_LIMIT:
+            return await punish_for_spam(user_id, chat_id, message)
+    else:
+        user_messages[user_id].clear()
 
-    # анти-стикеры
+    # Анти-стикеры
     if message.sticker:
-        user_sticker_counts[user_id] += 1
-        if user_sticker_counts[user_id] > STICKER_LIMIT:
-            return await issue_warn_or_mute(user_id, chat_id, message, "стикеры")
+        if set_sticker_filter(chat_id):
+            user_sticker_counts[user_id] += 1
+            if user_sticker_counts[user_id] > STICKER_LIMIT:
+                return await issue_warn_or_mute(user_id, chat_id, message, "стикеры")
+        else:
+            user_sticker_counts[user_id] = 0
         return
     else:
         user_sticker_counts[user_id] = 0
 
-    # фильтр ссылок
+    # Фильтр ссылок
     if get_link_filter(chat_id) and url_pattern.search(text):
         return await issue_warn_or_mute(user_id, chat_id, message, "ссылки")
 
-    # анти-капс
+    # Анти-капс
     if get_caps_filter(chat_id):
         letters = re.findall(r"[A-Za-zА-Яа-яЁё]", text)
         if letters and len(letters) > 6:
             ratio = sum(1 for c in letters if c.isupper()) / len(letters)
             if ratio > 0.7:
-                return await message.delete()
+                return await issue_warn_or_mute(user_id, chat_id, message, "капс")
 
-    # спам-символы
+    # Спам-символы
     if get_spam_filter(chat_id) and re.search(r"(.)\1{5,}", text):
         return await issue_warn_or_mute(user_id, chat_id, message, "спам символов")
 
-    # антимат
+    # Антимат
     if get_swear_filter(chat_id):
         ru = censor_ru.clean_line(text)
         en = censor_en.clean_line(text)
-        if ru[1] or ru[2] or en[1] or en[2]:
+        has_ru = (len(ru) > 2 and (ru[1] or ru[2]))
+        has_en = (len(en) > 2 and (en[1] or en[2]))
+        if has_ru or has_en:
             return await issue_warn_or_mute(user_id, chat_id, message, "мат")
 
-    # ключевые слова
+    # Ключевые слова
     if get_keywords_filter(chat_id):
         for kw in get_keywords(chat_id):
             if kw.lower() in text.lower():
