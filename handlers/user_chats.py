@@ -29,6 +29,7 @@ from db import (
     get_log_settings, set_log_chat,
     update_log_status, get_welcome_delete_timeout,
     get_join_delete, set_join_delete,
+    get_devil_mode, set_devil_mode,
 )
 from services.logger import send_log
 from handlers.start import inline_kb, reply_kb
@@ -156,6 +157,7 @@ async def callback_manage_uc(cq: CallbackQuery):
     sticker_state = get_sticker_filter(chat_id)
     swear_state = get_swear_filter(chat_id)
     keywords_state = get_keywords_filter(chat_id)
+    devil_state = get_devil_mode(chat_id)
 
     links_btn_text = f"🔗 Фильтрация ссылок: {'Вкл' if links_state else 'Выкл'}"
     caps_btn_text = f"🔠 Антикапс: {'Вкл' if caps_state else 'Выкл'}"
@@ -163,6 +165,7 @@ async def callback_manage_uc(cq: CallbackQuery):
     stickers_btn_text = f"⭐ Анти-стикеры: {'Вкл' if sticker_state else 'Выкл'}"
     swear_btn_text = f"🤬 Фильтрация мата: {'Вкл' if swear_state else 'Выкл'}"
     keywords_btn_text = f"🔑 Ключевые слова: {'Вкл' if keywords_state else 'Выкл'}"
+    devil_btn_text = f"😈 Devil mode: {'Вкл' if devil_state else 'Выкл'}"
 
     settings = get_log_settings(chat_id) or {}
     log_chat_id = settings.get("log_chat_id")
@@ -199,8 +202,9 @@ async def callback_manage_uc(cq: CallbackQuery):
         [InlineKeyboardButton(text=keywords_btn_text, callback_data=f"filter_keywords:{chat_id}")],
         [InlineKeyboardButton(text="💬 Установка приветствия", callback_data=f"setup_welcome:{chat_id}")],
         [InlineKeyboardButton(text="📜 Установка правил", callback_data=f"setup_rules:{chat_id}")],
-        [InlineKeyboardButton(text=log_btn_text, callback_data=f"logging:{chat_id}")],
         [InlineKeyboardButton(text=join_btn_text, callback_data=f"toggle_join_delete:{chat_id}")],
+        [InlineKeyboardButton(text=log_btn_text, callback_data=f"logging:{chat_id}")],
+        [InlineKeyboardButton(text=devil_btn_text, callback_data=f"toggle_devil:{chat_id}")],
         [InlineKeyboardButton(text="❌ Удалить чат", callback_data=f"delete_chat:{chat_id}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_chats")],
     ])
@@ -530,6 +534,34 @@ async def callback_delete_chat(cq: CallbackQuery):
     await send_log(
         bot, chat_id,
         f"🗑️ Чат удалён из списка пользователем {cq.from_user.full_name}"
+    )
+
+
+@router.callback_query(F.data.startswith("toggle_devil:"))
+async def callback_toggle_devil(cq: CallbackQuery):
+    chat_id = int(cq.data.split(":", 1)[1])
+    new = not get_devil_mode(chat_id)
+    set_devil_mode(chat_id, new)
+    await cq.answer()
+    await callback_manage_uc(cq)
+
+    chat_name = (await bot.get_chat(chat_id)).title or str(chat_id)
+
+    if new:
+        await bot.send_message(
+            chat_id,
+            "👿 Devil mode включён! С этого момента разрешены только сообщения с матами."
+        )
+    else:
+        await bot.send_message(
+            chat_id,
+            "😈 Devil mode отключён. Возвращаемся к обычным правилам."
+        )
+
+    await send_log(
+        bot, chat_id,
+        f"{'👿 Devil mode включён' if new else '😈 Devil mode отключён'} "
+        f"админом {cq.from_user.full_name} в «{chat_name}»"
     )
 
 

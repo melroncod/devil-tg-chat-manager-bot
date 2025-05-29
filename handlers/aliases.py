@@ -4,7 +4,9 @@ from time import time
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.enums import ChatType, ChatMemberStatus
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
+from aiogram.exceptions import TelegramBadRequest
+
 from loader import bot
 
 from services.logger import send_log
@@ -27,7 +29,11 @@ from db import (
     add_keyword,
     remove_keyword,
     get_log_settings,
+    get_devil_mode,
+    set_devil_mode,
 )
+
+from handlers.user_chats import callback_manage_uc
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -382,7 +388,7 @@ async def cmd_add_keyword(message: types.Message):
     if not await is_chat_admin(message):
         return await message.reply("❌ Только админы могут.")
     parts = message.text.split(maxsplit=1)
-    if len(parts)<2 or not parts[1].strip():
+    if len(parts) < 2 or not parts[1].strip():
         return await message.reply("❗ Укажите слово.", parse_mode="Markdown")
     kw = parts[1].strip().lower()
     add_keyword(message.chat.id, kw)
@@ -403,7 +409,7 @@ async def cmd_remove_keyword(message: types.Message):
     if not await is_chat_admin(message):
         return await message.reply("❌ Только админы могут.")
     parts = message.text.split(maxsplit=1)
-    if len(parts)<2 or not parts[1].strip():
+    if len(parts) < 2 or not parts[1].strip():
         return await message.reply("❗ Укажите слово.", parse_mode="Markdown")
     kw = parts[1].strip().lower()
     remove_keyword(message.chat.id, kw)
@@ -414,6 +420,74 @@ async def cmd_remove_keyword(message: types.Message):
         bot, message.chat.id,
         f"❌ remfromkw: «{kw}» удалено админом {message.from_user.full_name} в «{chat_name}»"
     )
+
+
+@router.message(
+    Command(commands=["demon"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_demon_text(message: Message):
+    chat_id = message.chat.id
+
+    if not await is_chat_admin(message):
+        return await message.reply("❌ Только админы могут включать Devil mode.")
+
+    set_devil_mode(chat_id, True)
+
+    await message.reply("👿 Devil mode включён! С этого момента разрешены только сообщения с матами.")
+
+    chat_name = await _get_chat_name(chat_id)
+    await send_log(
+        bot, chat_id,
+        f"👿 demon: Devil mode включён админом {message.from_user.full_name} в «{chat_name}»"
+    )
+
+    fake = CallbackQuery(
+        id=str(message.message_id),
+        from_user=message.from_user,
+        chat_instance="",
+        message=message,
+        data=f"manage_uc:{chat_id}"
+    )
+
+    try:
+        await callback_manage_uc(fake)
+    except TelegramBadRequest:
+        return
+
+
+@router.message(
+    Command(commands=["demoff"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_demoff_text(message: Message):
+    chat_id = message.chat.id
+
+    if not await is_chat_admin(message):
+        return await message.reply("❌ Только админы могут выключать Devil mode.")
+
+    set_devil_mode(chat_id, False)
+
+    await message.reply("😈 Devil mode отключён. Возвращаемся к обычным правилам.")
+
+    chat_name = await _get_chat_name(chat_id)
+    await send_log(
+        bot, chat_id,
+        f"😈 demoff: Devil mode отключён админом {message.from_user.full_name} в «{chat_name}»"
+    )
+
+    fake = CallbackQuery(
+        id=str(message.message_id),
+        from_user=message.from_user,
+        chat_instance="",
+        message=message,
+        data=f"manage_uc:{chat_id}"
+    )
+
+    try:
+        await callback_manage_uc(fake)
+    except TelegramBadRequest:
+        return
 
 
 @router.message(
@@ -447,7 +521,9 @@ async def cmd_show_commands(message: types.Message):
         "/getwelcomedelete — показать текущую настройку авто-удаления\n"
         "/setkw [слово] — добавить ключевое слово в фильтр\n"
         "/remfromkw [слово] — удалить ключевое слово из фильтра\n"
-        "/listkw — показать все ключевые слова"
+        "/listkw — показать все ключевые слова\n"
+        "/demon — включить Devil mode (только с матами)\n"
+        "/demoff — выключить Devil mode"
     )
     await message.reply(help_text, parse_mode="Markdown")
 

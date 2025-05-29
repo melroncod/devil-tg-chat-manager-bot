@@ -21,6 +21,7 @@ from db import (
     get_keywords_filter, get_keywords,
     get_warn_count, add_warn, reset_warns,
     get_mute_info, add_mute, reset_mutes,
+    get_devil_mode,
 )
 from config import ADMIN_IDS
 
@@ -144,6 +145,21 @@ async def moderation_filters(message: Message):
     if await is_chat_admin(chat_id, user_id):
         return
 
+    text = message.text or ""
+
+    if get_devil_mode(chat_id):
+        ru = censor_ru.clean_line(text)
+        en = censor_en.clean_line(text)
+        if not (ru[1] or ru[2] or en[1] or en[2]):
+            await message.delete()
+            mention = f"<a href='tg://user?id={user.id}'>{user.full_name}</a>"
+            await message.answer(
+                f"🚫 {mention}, в Devil mode вы можете отправлять **только** сообщения с ненормативной лексикой.\n"
+                "Чтобы ваше сообщение не удалялось — добавьте в него мат.",
+                parse_mode="HTML"
+            )
+        return
+
     # проверяем, не в текущем ли мы муте
     count, last_mute_dt = get_mute_info(user_id, chat_id)
     if last_mute_dt:
@@ -172,8 +188,6 @@ async def moderation_filters(message: Message):
         return
     else:
         user_sticker_counts[user_id] = 0
-
-    text = message.text or ""
 
     # фильтр ссылок
     if get_link_filter(chat_id) and url_pattern.search(text):

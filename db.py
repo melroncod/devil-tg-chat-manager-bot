@@ -75,8 +75,14 @@ def create_tables():
         swear_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
         keywords_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
         stickers_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
-        join_delete_enabled BOOLEAN NOT NULL DEFAULT FALSE
+        join_delete_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        devil_mode          BOOLEAN NOT NULL DEFAULT FALSE
     );
+    """)
+
+    c.execute("""
+    ALTER TABLE filters
+    ADD COLUMN IF NOT EXISTS devil_mode BOOLEAN NOT NULL DEFAULT FALSE;
     """)
 
     # 6) Таблица warnings
@@ -667,6 +673,39 @@ def get_rules(chat_id: int) -> str | None:
     row = c.fetchone()
     conn.close()
     return row[0] if row else None
+
+
+# ——— Devil Mode CRUD ———
+
+def get_devil_mode(chat_id: int) -> bool:
+    """
+    Возвращает True, если в filters.devil_mode = TRUE, иначе False.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    # убедимся, что запись есть
+    c.execute("INSERT INTO filters (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING", (chat_id,))
+    conn.commit()
+    c.execute("SELECT devil_mode FROM filters WHERE chat_id = %s", (chat_id,))
+    row = c.fetchone()
+    conn.close()
+    return bool(row[0]) if row else False
+
+
+def set_devil_mode(chat_id: int, enabled: bool) -> None:
+    """
+    Включает или выключает Devil mode для данного chat_id.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    # если записи ещё нет — создаём
+    c.execute("INSERT INTO filters (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING", (chat_id,))
+    c.execute(
+        "UPDATE filters SET devil_mode = %s WHERE chat_id = %s",
+        (enabled, chat_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 # ——— Log Settings CRUD ———
