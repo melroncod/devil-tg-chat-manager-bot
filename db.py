@@ -179,6 +179,15 @@ def create_tables():
     );
     """)
 
+    # 15) Таблица daily_weather
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS daily_weather (
+        chat_id   BIGINT PRIMARY KEY,
+        city      TEXT    NOT NULL,
+        time_str  TEXT    NOT NULL
+    );
+    """)
+
     conn.commit()
     c.close()
     conn.close()
@@ -768,3 +777,66 @@ def update_log_status(chat_id: int, enabled: bool) -> None:
     """, (chat_id, enabled))
     conn.commit()
     conn.close()
+
+
+# ——— Daily Weather CRUD ———
+
+def set_daily_weather(chat_id: int, city: str, time_str: str) -> None:
+    """
+    Сохраняет или обновляет настройку ежедневной рассылки погоды для данного chat_id.
+    time_str — строка формата "HH:MM" (24-часовой).
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS daily_weather (
+        chat_id   BIGINT PRIMARY KEY,
+        city      TEXT    NOT NULL,
+        time_str  TEXT    NOT NULL
+    );
+    """)
+    conn.commit()
+    c.execute("""
+        INSERT INTO daily_weather (chat_id, city, time_str)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (chat_id) DO UPDATE
+          SET city = EXCLUDED.city,
+              time_str = EXCLUDED.time_str
+    """, (chat_id, city, time_str))
+    conn.commit()
+    c.close()
+    conn.close()
+
+
+def remove_daily_weather(chat_id: int) -> None:
+    """
+    Удаляет настройку ежедневной рассылки погоды для данного chat_id.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM daily_weather WHERE chat_id = %s", (chat_id,))
+    conn.commit()
+    c.close()
+    conn.close()
+
+
+def get_all_daily_weather() -> list[tuple[int, str, str]]:
+    """
+    Возвращает список всех записей (chat_id, city, time_str) из daily_weather.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    # Ещё раз создаём таблицу, если вдруг кто-то забудет вызвать create_tables()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS daily_weather (
+        chat_id   BIGINT PRIMARY KEY,
+        city      TEXT    NOT NULL,
+        time_str  TEXT    NOT NULL
+    );
+    """)
+    conn.commit()
+    c.execute("SELECT chat_id, city, time_str FROM daily_weather")
+    rows = c.fetchall()
+    c.close()
+    conn.close()
+    return rows

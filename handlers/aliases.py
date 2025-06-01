@@ -7,6 +7,10 @@ from aiogram.enums import ChatType, ChatMemberStatus
 from aiogram.types import CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest
 
+import asyncio
+from config import weather_mgr
+from datetime import datetime
+
 from loader import bot
 from services.logger import send_log
 from db import (
@@ -31,6 +35,9 @@ from db import (
     get_devil_mode,
     set_devil_mode,
     get_admins,
+    set_daily_weather,
+    remove_daily_weather,
+    get_all_daily_weather
 )
 from handlers.user_chats import callback_manage_uc
 
@@ -167,6 +174,50 @@ async def process_admin_command(message: types.Message, command_type: str) -> No
     except Exception as e:
         logger.error(f"Ошибка в process_admin_command: {e}")
         await message.reply(f"❗ Произошла ошибка: {e}")
+
+
+async def get_weather_by_city(city_name: str) -> str:
+    try:
+        observation = weather_mgr.weather_at_place(city_name)
+        w = observation.weather
+
+        # Температура и «ощущается как»
+        temp = w.temperature("celsius")["temp"]
+        feels_like = w.temperature("celsius")["feels_like"]
+
+        # Описание (на русском, т.к. language="ru")
+        status = w.detailed_status
+
+        # Влажность и давление
+        humidity = w.humidity
+        pressure = w.pressure.get("press")
+
+        # Облачность и ветер
+        clouds = w.clouds  # %
+        wind_speed = w.wind().get("speed", 0)  # м/с
+
+        # Время восхода/заката (методы у объекта Weather)
+        sunrise_ts = w.sunrise_time()  # возвращает UNIX-время
+        sunset_ts = w.sunset_time()  # возвращает UNIX-время
+        sunrise = datetime.fromtimestamp(sunrise_ts).strftime("%H:%M")
+        sunset = datetime.fromtimestamp(sunset_ts).strftime("%H:%M")
+
+        # Формируем «красивый» ответ
+        reply = (
+            f"🌤 <b>Погода в городе {city_name}</b>:\n"
+            f"• <b>Состояние:</b> {status.capitalize()}\n"
+            f"• <b>Температура:</b> {temp:.1f} °C (ощущается как {feels_like:.1f} °C)\n"
+            f"• <b>Влажность:</b> {humidity}%\n"
+            f"• <b>Давление:</b> {pressure} гПа\n"
+            f"• <b>Облачность:</b> {clouds}%\n"
+            f"• <b>Ветер:</b> {wind_speed} м/с\n"
+            f"• <b>Восход:</b> {sunrise}  •  <b>Закат:</b> {sunset}"
+        )
+        return reply
+
+    except Exception as e:
+        print(f"[DEBUG] get_weather_by_city('{city_name}') упало: {e!r}")
+        return f"❗ Не удалось получить погоду для «{city_name}». Проверьте правильность названия."
 
 
 PREFIXES = ("/", "!")
@@ -480,21 +531,24 @@ async def cmd_show_commands(message: Message):
     help_text = (
         "/rules — показать правила чата\n"
         "/setup — регистрация чата для управления\n"
-        "/ban [@username|reply] — забанить пользователя\n"
-        "/unban [@username|reply] — разбанить пользователя\n"
-        "/mute [@username|reply] [часы] — замутить пользователя\n"
-        "/unmute [@username|reply] — размутить пользователя\n"
-        "/checkperms [@username|reply] — проверить права пользователя\n"
+        "/ban <@username|reply> — забанить пользователя\n"
+        "/unban <@username|reply> — разбанить пользователя\n"
+        "/mute <@username|reply> <часы> — замутить пользователя\n"
+        "/unmute <@username|reply> — размутить пользователя\n"
+        "/checkperms <@username|reply> — проверить права пользователя\n"
         "/ro — переключить режим только для чтения\n"
-        "/resetwarn [@username|reply] — обнулить варны пользователя\n"
+        "/resetwarn <@username|reply> — обнулить варны пользователя\n"
         "/resetwarnsall — обнулить все варны в чате\n"
-        "/setwelcomedelete [секунд] — задать таймаут авто-удаления приветствия\n"
+        "/setwelcomedelete <секунд> — задать таймаут авто-удаления приветствия\n"
         "/getwelcomedelete — показать текущую настройку авто-удаления\n"
-        "/setkw [слово] — добавить ключевое слово в фильтр\n"
-        "/remfromkw [слово] — удалить ключевое слово из фильтра\n"
+        "/setkw <слово> — добавить ключевое слово в фильтр\n"
+        "/remfromkw <слово> — удалить ключевое слово из фильтра\n"
         "/listkw — показать все ключевые слова\n"
         "/demon — включить Devil mode (только с матами)\n"
-        "/demoff — выключить Devil mode"
+        "/demoff — выключить Devil mode\n"
+        "/weather <город> — метеорологические данные на текущий момент для заданного города\n"
+        "/setweather <город> <время(МСК)> — ежедневная рассылка погоды в заданное время для заданного города\n"
+        "/delweather — отключение ежедневной рассылка погоды"
     )
     await message.reply(help_text, parse_mode="Markdown")
 
@@ -524,5 +578,127 @@ async def cmd_msg(message: types.Message):
         await message.reply(f"❗ Ошибка при отправке: {e}")
 
 
+@router.message(
+    Command(commands=["weather"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP])
+)
+async def cmd_weather(message: types.Message):
+    text = message.text or ""
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.reply("❗ Использование: !weather <город> (например: !weather Москва)")
+        return
+
+    city_name = parts[1].strip()
+    reply_text = await get_weather_by_city(city_name)
+    await message.reply(reply_text, parse_mode="HTML")
+
+
+@router.message(
+    Command(commands=["setweather"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP, ChatType.PRIVATE])
+)
+async def cmd_set_daily_weather(message: types.Message):
+    """
+    Команда: /setweather <город> <HH:MM>
+    Пример: /setweather Нижний Тагил 20:00
+    """
+    # Проверка прав (только админы чата или супер-админ бота могут задавать)
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return  # игнорируем, если не админ
+
+    # Разбиваем весь текст на слова (токены)
+    tokens = message.text.split()
+    # Должно быть минимум 3 токена: [команда, <слово1_города>, ..., <HH:MM>]
+    if len(tokens) < 3:
+        await message.reply(
+            "❗ Использование: /setweather <город> <ЧЧ:ММ>\n"
+            "Например: /setweather Нижний Тагил 20:00"
+        )
+        return
+
+    # Последний токен — это время
+    time_arg = tokens[-1].strip()
+    # Всё, что между командой и временем, — это название города (может состоять из нескольких слов)
+    city = " ".join(tokens[1:-1]).strip()
+
+    # Проверяем, что город не пустой (вдруг пользователь написал только "/setweather 20:00")
+    if not city:
+        await message.reply(
+            "❗ Вы не указали город.\n"
+            "Использование: /setweather <город> <ЧЧ:ММ>\n"
+            "Например: /setweather Нижний Тагил 20:00"
+        )
+        return
+
+    # Проверим строку времени: формат «HH:MM»
+    try:
+        # Если строка не «HH:MM», datetime.strptime выбросит ValueError
+        valid_time = datetime.strptime(time_arg, "%H:%M")
+    except ValueError:
+        await message.reply("❗ Неверный формат времени. Используйте HH:MM (например, 07:45).")
+        return
+
+    chat_id = message.chat.id
+    # Сохраняем в БД: (chat_id, city, time_arg)
+    set_daily_weather(chat_id, city, time_arg)
+
+    await message.reply(
+        f"✅ Ежедневная рассылка погоды установлена:\n"
+        f"• Город: <b>{city}</b>\n"
+        f"• Время(МСК): <b>{time_arg}</b>\n"
+        f"Каждый день в это время я пришлю прогноз.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(
+    Command(commands=["delweather"], prefix=PREFIXES, ignore_mention=True, ignore_case=True),
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP, ChatType.PRIVATE])
+)
+async def cmd_delete_daily_weather(message: types.Message):
+    """
+    Команда: /delweather
+    Удаляет из БД настройку ежедневной рассылки в этом чате.
+    """
+    sender_id = message.from_user.id if message.from_user else None
+    if sender_id not in get_admins() and not await is_chat_admin(message):
+        return
+
+    chat_id = message.chat.id
+    remove_daily_weather(chat_id)
+    await message.reply("✅ Ежедневная рассылка погоды отключена.")
+
+
+async def weather_scheduler():
+    """
+    Ежедневная рассылка погоды. Проверяем каждую минуту.
+    """
+    await asyncio.sleep(1)
+    logger.info("🚀 weather_scheduler запущен, теперь ждём совпадений по времени...")
+    while True:
+        now = datetime.now().strftime("%H:%M")
+        logger.debug(f"[weather_scheduler] Текущее время: {now}")
+
+        tasks = get_all_daily_weather()
+        if tasks:
+            logger.debug(f"[weather_scheduler] Задач в БД: {len(tasks)}")
+            for chat_id, city, time_str in tasks:
+                logger.debug(
+                    f"[weather_scheduler] Проверка: chat_id={chat_id}, city={city}, time_str={time_str}"
+                )
+                if time_str == now:
+                    try:
+                        forecast = await get_weather_by_city(city)
+                        await bot.send_message(chat_id=chat_id, text=forecast, parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"[weather_scheduler] Ошибка при отправке погоды в чат {chat_id}: {e!r}")
+        else:
+            logger.debug("[weather_scheduler] Нет ни одной настройки daily_weather")
+        await asyncio.sleep(60)
+
+
 def register_handlers_aliases(dp):
     dp.include_router(router)
+    asyncio.create_task(weather_scheduler())
