@@ -3,12 +3,23 @@ version: '3.8'
 services:
   bot:
     build: .
-    container_name: telegram_chat_manager_bot
-    restart: always
+    container_name: devil_bot
+    restart: unless-stopped
     env_file:
       - .env
     networks:
       - tea_bot_default
+
+    mem_limit: 512m               # жёсткий лимит на 512 MB RAM
+    mem_reservation: 256m         # «мягкий» резерв в 256 MB (docker попытается не превышать)
+    cpus: '0.5'                   # выделить не больше 50% CPU одного ядра
+
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python.*main.py' || exit 1"]
+      interval: 30s               # проверять каждые 30 секунд
+      timeout: 10s                # таймаут выполнения команды
+      retries: 3                  # считает сервис unhealthy после 3 неудач подряд
+      start_period: 10s           # ждать 10 секунд после запуска контейнера, прежде чем считать проверки
 
 networks:
   tea_bot_default:
