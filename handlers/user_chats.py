@@ -78,7 +78,7 @@ async def cmd_my_chats(message: Message):
 
     if not valid:
         return await message.answer(
-            "У вас не осталось доступных чатов (бот был удалён).",
+            "У вас не осталось доступных чатов (бот был удалён из чата).",
             parse_mode="Markdown"
         )
 

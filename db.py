@@ -199,7 +199,7 @@ def get_ban_info(user_id: int, chat_id: int) -> tuple[int, datetime | None]:
     """Получает информацию о банах пользователя в чате"""
     conn = get_connection()
     c = conn.cursor()
-    # Убеждаемся, что таблица bans существует
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS bans (
             user_id   BIGINT NOT NULL,
@@ -226,7 +226,7 @@ def add_ban(user_id: int, chat_id: int, username: str):
     conn = get_connection()
     c = conn.cursor()
     now = datetime.utcnow()
-    # Убеждаемся, что таблица bans существует
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS bans (
             user_id   BIGINT NOT NULL,
@@ -255,7 +255,7 @@ def reset_bans(user_id: int, chat_id: int):
     """Сбрасывает счетчик банов для пользователя в чате"""
     conn = get_connection()
     c = conn.cursor()
-    # Убеждаемся, что таблица bans существует
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS bans (
             user_id   BIGINT NOT NULL,
@@ -451,12 +451,12 @@ def add_user_chat(user_id: int, chat_id: int, chat_name: str, is_message: bool =
     now = datetime.utcnow()
     conn = get_connection()
     c = conn.cursor()
-    # Обновляем или вставляем название чата
+
     c.execute(
         "INSERT INTO chats (chat_id, name) VALUES (%s, %s) ON CONFLICT (chat_id) DO UPDATE SET name = EXCLUDED.name",
         (chat_id, chat_name)
     )
-    # Upsert в user_chats, сохраняем существующий message_count
+
     c.execute("""
         INSERT INTO user_chats (user_id, chat_id, first_seen, last_seen, message_count)
         VALUES (%s, %s, %s, %s,
@@ -692,7 +692,7 @@ def get_devil_mode(chat_id: int) -> bool:
     """
     conn = get_connection()
     c = conn.cursor()
-    # убедимся, что запись есть
+
     c.execute("INSERT INTO filters (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING", (chat_id,))
     conn.commit()
     c.execute("SELECT devil_mode FROM filters WHERE chat_id = %s", (chat_id,))
@@ -707,7 +707,7 @@ def set_devil_mode(chat_id: int, enabled: bool) -> None:
     """
     conn = get_connection()
     c = conn.cursor()
-    # если записи ещё нет — создаём
+
     c.execute("INSERT INTO filters (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING", (chat_id,))
     c.execute(
         "UPDATE filters SET devil_mode = %s WHERE chat_id = %s",
@@ -826,7 +826,7 @@ def get_all_daily_weather() -> list[tuple[int, str, str]]:
     """
     conn = get_connection()
     c = conn.cursor()
-    # Ещё раз создаём таблицу, если вдруг кто-то забудет вызвать create_tables()
+
     c.execute("""
     CREATE TABLE IF NOT EXISTS daily_weather (
         chat_id   BIGINT PRIMARY KEY,
